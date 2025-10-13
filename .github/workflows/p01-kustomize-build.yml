@@ -39,7 +39,7 @@ jobs:
           services="[${changed_services::-1}]"
           
           # Create matrix for service x environment combinations
-          environments=["stg", "prod", "sandbox"]
+          environments=["stg","prod","sandbox"]
           
           echo "has-changes=true" >> $GITHUB_OUTPUT
           echo "services=$services" >> $GITHUB_OUTPUT
