@@ -1,0 +1,237 @@
+name: Policy Compliance Check
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'manifests/services/**'
+      - 'policies/**'
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  detect-changes:
+    name: Detect Changed Services
+    runs-on: ubuntu-latest
+    outputs:
+      services: ${{ steps.detect.outputs.services }}
+      has-changes: ${{ steps.detect.outputs.has-changes }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect changed services
+        id: detect
+        run: |
+          # Get list of changed files in manifests/services/
+          changed_files=$(git diff --name-only origin/${{ github.base_ref }}...HEAD -- manifests/services/ || echo "")
+          
+          if [ -z "$changed_files" ]; then
+            echo "has-changes=false" >> $GITHUB_OUTPUT
+            echo "services=[]" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          
+          # Extract unique service names
+          services=$(echo "$changed_files" | \
+            grep -E '^manifests/services/[^/]+/' | \
+            sed 's|manifests/services/\([^/]*\)/.*|\1|' | \
+            sort -u | \
+            jq -R -s -c 'split("\n") | map(select(length > 0))')
+          
+          echo "has-changes=true" >> $GITHUB_OUTPUT
+          echo "services=$services" >> $GITHUB_OUTPUT
+          echo "Detected services: $services"
+
+  build-manifests:
+    name: Build Manifests - ${{ matrix.service }} (${{ matrix.environment }})
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: needs.detect-changes.outputs.has-changes == 'true'
+    strategy:
+      matrix:
+        service: ${{ fromJson(needs.detect-changes.outputs.services) }}
+        environment: [stg, prod, sandbox]
+      fail-fast: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Kustomize
+        uses: imranismail/setup-kustomize@v2
+
+      - name: Check if environment exists
+        id: check-env
+        run: |
+          if [ -d "manifests/services/${{ matrix.service }}/environments/${{ matrix.environment }}" ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Build manifests
+        if: steps.check-env.outputs.exists == 'true'
+        run: |
+          mkdir -p output
+          kustomize build manifests/services/${{ matrix.service }}/environments/${{ matrix.environment }} > \
+            output/${{ matrix.service }}-${{ matrix.environment }}.yaml
+
+      - name: Upload manifests
+        if: steps.check-env.outputs.exists == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: manifests-${{ matrix.service }}-${{ matrix.environment }}
+          path: output/${{ matrix.service }}-${{ matrix.environment }}.yaml
+          retention-days: 1
+
+  policy-check-blocking:
+    name: Policy Check (Blocking)
+    runs-on: ubuntu-latest
+    needs: [detect-changes, build-manifests]
+    if: needs.detect-changes.outputs.has-changes == 'true'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Setup OPA
+        uses: open-policy-agent/setup-opa@v2
+        with:
+          version: latest
+
+      - name: Download all manifests
+        uses: actions/download-artifact@v4
+        with:
+          pattern: manifests-*
+          path: built-manifests
+          merge-multiple: true
+
+      - name: Install Python dependencies
+        run: |
+          pip install -r requirements.txt
+
+      - name: Evaluate policies (Blocking level)
+        id: eval-blocking
+        run: |
+          python .github/scripts/evaluate-policies.py blocking built-manifests policies/compliance-config.yaml policies/
+
+      - name: Upload blocking results
+        uses: actions/upload-artifact@v4
+        with:
+          name: policy-results-blocking
+          path: policy-results-blocking.json
+          retention-days: 7
+
+      - name: Check blocking failures
+        run: |
+          python -c "
+          import json
+          import sys
+          with open('policy-results-blocking.json') as f:
+              data = json.load(f)
+          blocking_failures = sum(1 for r in data['results'] if r['level'] == 'BLOCKING' and not r['passed'])
+          if blocking_failures > 0:
+              print(f'❌ Found {blocking_failures} BLOCKING policy violations')
+              sys.exit(1)
+          "
+
+  policy-check-advisory:
+    name: Policy Check (Advisory)
+    runs-on: ubuntu-latest
+    needs: [detect-changes, build-manifests]
+    if: needs.detect-changes.outputs.has-changes == 'true'
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Setup OPA
+        uses: open-policy-agent/setup-opa@v2
+        with:
+          version: latest
+
+      - name: Download all manifests
+        uses: actions/download-artifact@v4
+        with:
+          pattern: manifests-*
+          path: built-manifests
+          merge-multiple: true
+
+      - name: Install Python dependencies
+        run: |
+          pip install -r requirements.txt
+
+      - name: Evaluate policies (All levels)
+        id: eval-all
+        run: |
+          python .github/scripts/evaluate-policies.py all built-manifests policies/compliance-config.yaml policies/
+
+      - name: Upload all results
+        uses: actions/upload-artifact@v4
+        with:
+          name: policy-results-all
+          path: policy-results-all.json
+          retention-days: 7
+
+  report:
+    name: Generate Policy Report
+    runs-on: ubuntu-latest
+    needs: [policy-check-blocking, policy-check-advisory]
+    if: always() && needs.detect-changes.outputs.has-changes == 'true'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Python dependencies
+        run: |
+          pip install -r requirements.txt
+
+      - name: Download results
+        uses: actions/download-artifact@v4
+        with:
+          pattern: policy-results-*
+          path: results
+          merge-multiple: true
+
+      - name: Generate report
+        run: |
+          python .github/scripts/generate-report.py results/policy-results-all.json > report.md
+
+      - name: Find existing comment
+        uses: peter-evans/find-comment@v3
+        id: find-comment
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          comment-author: 'github-actions[bot]'
+          body-includes: '## 🔍 Policy Compliance Report'
+
+      - name: Delete old comment
+        if: steps.find-comment.outputs.comment-id != ''
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.deleteComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: ${{ steps.find-comment.outputs.comment-id }}
+            })
+
+      - name: Post report
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          body-path: report.md
+

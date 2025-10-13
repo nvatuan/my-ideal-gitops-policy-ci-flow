@@ -1,0 +1,267 @@
+name: P02 - Policy Evaluation
+
+on:
+  workflow_run:
+    workflows: ["P01 - Kustomize Build"]
+    types:
+      - completed
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  policy-check-blocking:
+    name: Policy Check (Blocking)
+    runs-on: ubuntu-latest
+    if: github.event.workflow_run.conclusion == 'success'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Setup OPA
+        uses: open-policy-agent/setup-opa@v2
+        with:
+          version: latest
+
+      - name: Install Python dependencies
+        run: |
+          pip install -r requirements.txt
+
+      - name: Download artifacts
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const artifacts = await github.rest.actions.listWorkflowRunArtifacts({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              run_id: ${{ github.event.workflow_run.id }},
+            });
+            
+            const fs = require('fs');
+            fs.mkdirSync('built-manifests', { recursive: true });
+            
+            for (const artifact of artifacts.data.artifacts) {
+              if (!artifact.name.startsWith('after-')) continue;
+              
+              const download = await github.rest.actions.downloadArtifact({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                artifact_id: artifact.id,
+                archive_format: 'zip',
+              });
+              
+              const filename = artifact.name.replace('after-', '') + '.zip';
+              fs.writeFileSync('built-manifests/' + filename, Buffer.from(download.data));
+            }
+
+      - name: Extract manifests
+        run: |
+          cd built-manifests
+          for zip in *.zip; do
+            if [ -f "$zip" ]; then
+              unzip -q "$zip"
+              rm "$zip"
+            fi
+          done
+
+      - name: Evaluate policies (Blocking level)
+        run: |
+          python .github/scripts/evaluate-policies.py blocking built-manifests policies/compliance-config.yaml policies/
+
+      - name: Upload blocking results
+        uses: actions/upload-artifact@v4
+        with:
+          name: policy-results-blocking
+          path: policy-results-blocking.json
+          retention-days: 7
+
+      - name: Check blocking failures
+        run: |
+          python -c "
+          import json
+          import sys
+          with open('policy-results-blocking.json') as f:
+              data = json.load(f)
+          blocking_failures = sum(1 for r in data['results'] if r['level'] == 'BLOCKING' and not r['passed'])
+          if blocking_failures > 0:
+              print(f'❌ Found {blocking_failures} BLOCKING policy violations')
+              sys.exit(1)
+          "
+
+  policy-check-advisory:
+    name: Policy Check (Advisory)
+    runs-on: ubuntu-latest
+    if: github.event.workflow_run.conclusion == 'success'
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Setup OPA
+        uses: open-policy-agent/setup-opa@v2
+        with:
+          version: latest
+
+      - name: Install Python dependencies
+        run: |
+          pip install -r requirements.txt
+
+      - name: Download artifacts
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const artifacts = await github.rest.actions.listWorkflowRunArtifacts({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              run_id: ${{ github.event.workflow_run.id }},
+            });
+            
+            const fs = require('fs');
+            fs.mkdirSync('built-manifests', { recursive: true });
+            
+            for (const artifact of artifacts.data.artifacts) {
+              if (!artifact.name.startsWith('after-')) continue;
+              
+              const download = await github.rest.actions.downloadArtifact({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                artifact_id: artifact.id,
+                archive_format: 'zip',
+              });
+              
+              const filename = artifact.name.replace('after-', '') + '.zip';
+              fs.writeFileSync('built-manifests/' + filename, Buffer.from(download.data));
+            }
+
+      - name: Extract manifests
+        run: |
+          cd built-manifests
+          for zip in *.zip; do
+            if [ -f "$zip" ]; then
+              unzip -q "$zip"
+              rm "$zip"
+            fi
+          done
+
+      - name: Evaluate policies (All levels)
+        run: |
+          python .github/scripts/evaluate-policies.py all built-manifests policies/compliance-config.yaml policies/
+
+      - name: Upload all results
+        uses: actions/upload-artifact@v4
+        with:
+          name: policy-results-all
+          path: policy-results-all.json
+          retention-days: 7
+
+  report:
+    name: Generate Policy Report
+    runs-on: ubuntu-latest
+    needs: [policy-check-blocking, policy-check-advisory]
+    if: always()
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Python dependencies
+        run: |
+          pip install -r requirements.txt
+
+      - name: Download policy results
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const artifacts = await github.rest.actions.listWorkflowRunArtifacts({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              run_id: context.runId,
+            });
+            
+            const fs = require('fs');
+            fs.mkdirSync('results', { recursive: true });
+            
+            for (const artifact of artifacts.data.artifacts) {
+              if (!artifact.name.startsWith('policy-results-')) continue;
+              
+              const download = await github.rest.actions.downloadArtifact({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                artifact_id: artifact.id,
+                archive_format: 'zip',
+              });
+              
+              fs.writeFileSync('results/' + artifact.name + '.zip', Buffer.from(download.data));
+            }
+
+      - name: Extract results
+        run: |
+          cd results
+          for zip in *.zip; do
+            if [ -f "$zip" ]; then
+              unzip -q "$zip"
+              rm "$zip"
+            fi
+          done
+
+      - name: Generate report
+        run: |
+          python .github/scripts/generate-report.py results/policy-results-all.json > report.md
+
+      - name: Get PR number
+        id: pr
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const pulls = await github.rest.pulls.list({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              head: context.payload.workflow_run.head_repository.owner.login + ':' + context.payload.workflow_run.head_branch
+            });
+            
+            if (pulls.data.length > 0) {
+              return pulls.data[0].number;
+            }
+            return null;
+          result-encoding: string
+
+      - name: Find existing policy comment
+        if: steps.pr.outputs.result != 'null'
+        uses: peter-evans/find-comment@v3
+        id: find-comment
+        with:
+          issue-number: ${{ steps.pr.outputs.result }}
+          comment-author: 'github-actions[bot]'
+          body-includes: '## 🔍 Policy Compliance Report'
+
+      - name: Delete old policy comment
+        if: steps.pr.outputs.result != 'null' && steps.find-comment.outputs.comment-id != ''
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.deleteComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: ${{ steps.find-comment.outputs.comment-id }}
+            })
+
+      - name: Post report
+        if: steps.pr.outputs.result != 'null'
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          issue-number: ${{ steps.pr.outputs.result }}
+          body-path: report.md
+

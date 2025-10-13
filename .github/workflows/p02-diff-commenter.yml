@@ -1,0 +1,81 @@
+name: P02 - Manifest Diff Commenter
+
+on:
+  workflow_run:
+    workflows: ["P01 - Kustomize Build"]
+    types:
+      - completed
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  diff-and-comment:
+    name: Generate Diff and Comment
+    runs-on: ubuntu-latest
+    if: github.event.workflow_run.conclusion == 'success'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download before manifests
+        uses: actions/download-artifact@v5
+        with:
+          pattern: before-*
+          path: artifacts/before
+          merge-multiple: true
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ github.event.workflow_run.id }}
+
+      - name: Download after manifests
+        uses: actions/download-artifact@v5
+        with:
+          pattern: after-*
+          path: artifacts/after
+          merge-multiple: true
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ github.event.workflow_run.id }}
+
+      - name: Generate diff
+        run: |
+          {
+            echo "## 📊 Manifest Diff"
+            echo ""
+            echo '```diff'
+            diff -ur artifacts/before artifacts/after || true
+            echo '```'
+          } > diff-report.md
+
+      - name: Get PR number
+        id: pr
+        run: |
+          PR_NUMBER=$(echo '${{ toJson(github.event.workflow_run.pull_requests) }}' | jq -r '.[0].number // empty')
+          echo "number=$PR_NUMBER" >> $GITHUB_OUTPUT
+
+      - name: Find existing diff comment
+        if: steps.pr.outputs.number != ''
+        uses: peter-evans/find-comment@v3
+        id: find-comment
+        with:
+          issue-number: ${{ steps.pr.outputs.number }}
+          comment-author: 'github-actions[bot]'
+          body-includes: '## 📊 Manifest Changes'
+
+      - name: Delete old diff comment
+        if: steps.pr.outputs.number != '' && steps.find-comment.outputs.comment-id != ''
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.deleteComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: ${{ steps.find-comment.outputs.comment-id }}
+            })
+
+      - name: Post diff comment
+        if: steps.pr.outputs.number != ''
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          issue-number: ${{ steps.pr.outputs.number }}
+          body-path: diff-report.md
+

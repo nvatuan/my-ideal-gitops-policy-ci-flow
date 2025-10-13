@@ -1,0 +1,145 @@
+name: P01 - Kustomize Build
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'manifests/services/**'
+
+permissions:
+  contents: read
+
+jobs:
+  detect-changes:
+    name: Detect Changed Services
+    runs-on: ubuntu-latest
+    outputs:
+      services: ${{ steps.detect.outputs.services }}
+      has-changes: ${{ steps.detect.outputs.has-changes }}
+      environments: ${{ steps.detect.outputs.environments }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect changed services
+        id: detect
+        run: |
+          # Get list of changed files in manifests/services/
+          changed_services=$(git diff --name-only origin/${{ github.base_ref }}...HEAD | grep -E "^manifests/services" | cut -d / -f 3 | sort | uniq | xargs -I@ echo "\"@\"" | tr '\n' ',') || echo "")
+          
+          if [ -z "$changed_services" ]; then
+            echo "has-changes=false" >> $GITHUB_OUTPUT
+            echo "services=[]" >> $GITHUB_OUTPUT
+            echo "environments={\"include\":[]}" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          
+          # Extract unique service names
+          services="[${changed_services::-1}]"
+          
+          # Create matrix for service x environment combinations
+          environments=["stg", "prod", "sandbox"]
+          
+          echo "has-changes=true" >> $GITHUB_OUTPUT
+          echo "services=$services" >> $GITHUB_OUTPUT
+          echo "environments=$environments" >> $GITHUB_OUTPUT
+          echo "Detected services: $services"
+
+  build-kustomize-manifest:
+    name: Build ${{ matrix.service }}/${{ matrix.environment }}
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: needs.detect-changes.outputs.has-changes == 'true'
+    strategy:
+      matrix:
+        service: ${{ fromJson(needs.detect-changes.outputs.services) }}
+        environment: ${{ fromJson(needs.detect-changes.outputs.environments) }}
+      fail-fast: false
+    steps:
+      - name: Check if environment exists
+        id: check-env
+        run: |
+          if [ -d "manifests/services/${{ matrix.service }}/environments/${{ matrix.environment }}" ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Cache Kustomize
+        id: cache-kustomize
+        uses: actions/cache@v3
+        with:
+          path: ${{ github.workspace }}/kustomize
+          key: kustomize-5.2.1
+
+      - name: Install Kustomize
+        if: steps.cache-kustomize.outputs.cache-hit != 'true'
+        run: |
+          curl "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash -s -- 5.2.1
+
+      - name: Checkout PR branch
+        uses: actions/checkout@v4
+
+      - name: Setup Kustomize
+        uses: imranismail/setup-kustomize@v2
+
+      - name: Build AFTER manifest (PR branch)
+        if: steps.check-env.outputs.exists == 'true'
+        run: |
+          mkdir -p output/after
+          filename=${{ matrix.service }}-${{ matrix.environment }}.yaml
+          kustomize build manifests/services/${{ matrix.service }}/environments/${{ matrix.environment }} > \
+            output/after/$filename
+
+      - name: Checkout base branch
+        if: steps.check-env.outputs.exists == 'true'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.base_ref }}
+          path: base
+
+      - name: Build BEFORE manifest (base branch)
+        if: steps.check-env.outputs.exists == 'true'
+        run: |
+          mkdir -p output/before
+          cd base
+          filename=${{ matrix.service }}-${{ matrix.environment }}.yaml
+          if [ -d "manifests/services/${{ matrix.service }}/environments/${{ matrix.environment }}" ]; then
+            kustomize build manifests/services/${{ matrix.service }}/environments/${{ matrix.environment }} > \
+              ../output/before/$filename
+          else
+            # New service, create empty before file
+            touch ../output/before/$filename
+          fi
+
+      - name: Upload before manifests
+        if: steps.check-env.outputs.exists == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: before-${{ matrix.service }}-${{ matrix.environment }}
+          path: output/before/${{ matrix.service }}-${{ matrix.environment }}.yaml
+          retention-days: 1
+
+      - name: Upload after manifests
+        if: steps.check-env.outputs.exists == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: after-${{ matrix.service }}-${{ matrix.environment }}
+          path: output/after/${{ matrix.service }}-${{ matrix.environment }}.yaml
+          retention-days: 1
+
+  build-complete:
+    name: Build Complete
+    runs-on: ubuntu-latest
+    needs: [detect-changes, build-kustomize-manifest]
+    if: always() && needs.detect-changes.outputs.has-changes == 'true'
+    steps:
+      - name: Check build status
+        run: |
+          if [ "${{ needs.build-kustomize-manifest.result }}" == "failure" ]; then
+            echo "❌ Manifest builds failed"
+            exit 1
+          fi
+          echo "✅ All manifests built successfully"
+
