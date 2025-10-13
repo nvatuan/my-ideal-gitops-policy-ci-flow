@@ -1,0 +1,40 @@
+name: P00 - YAML Lint
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'manifests/services/**/*.yaml'
+      - 'manifests/services/**/*.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  yamllint:
+    name: Lint YAML Manifests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get changed YAML files
+        id: changed-files
+        run: |
+          changed_files=$(git diff --name-only origin/${{ github.base_ref }}...HEAD | grep -E "^manifests/services/.*\.(yaml|yml)$" || echo "")
+          if [ -z "$changed_files" ]; then
+            echo "has-files=false" >> $GITHUB_OUTPUT
+          else
+            echo "has-files=true" >> $GITHUB_OUTPUT
+            echo "$changed_files" > changed-files.txt
+            echo "Changed files:"
+            cat changed-files.txt
+          fi
+
+      - name: Run yamllint
+        if: steps.changed-files.outputs.has-files == 'true'
+        run: |
+          pip install yamllint
+          cat changed-files.txt | xargs yamllint -d "{extends: relaxed, rules: {line-length: {max: 120}}}"
+
