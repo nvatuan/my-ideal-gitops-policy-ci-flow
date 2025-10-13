@@ -51,6 +51,9 @@ class PolicyEvaluator:
         """Parse ISO 8601 date string."""
         if not date_str:
             return None
+        # Handle if YAML already parsed it as datetime
+        if isinstance(date_str, datetime):
+            return date_str
         try:
             return datetime.fromisoformat(date_str.replace('Z', '+00:00'))
         except (ValueError, AttributeError):
