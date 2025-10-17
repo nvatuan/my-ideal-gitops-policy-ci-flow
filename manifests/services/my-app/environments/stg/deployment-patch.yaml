@@ -8,7 +8,7 @@ spec:
     spec:
       containers:
       - name: my-app
-        image: nginx:1.21
+        image: nginx:latest
         env:
         - name: ENVIRONMENT
           value: "staging"
