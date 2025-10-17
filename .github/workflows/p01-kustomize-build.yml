@@ -31,7 +31,7 @@ jobs:
           if [ -z "$changed_services" ]; then
             echo "has-changes=false" >> $GITHUB_OUTPUT
             echo "services=[]" >> $GITHUB_OUTPUT
-            echo "environments={\"include\":[]}" >> $GITHUB_OUTPUT
+            echo "environments=[]" >> $GITHUB_OUTPUT
             exit 0
           fi
           
@@ -39,7 +39,7 @@ jobs:
           services="[${changed_services::-1}]"
           
           # Create matrix for service x environment combinations
-          environments=["stg","prod","sandbox"]
+          environments='["stg","prod","sandbox"]'
           
           echo "has-changes=true" >> $GITHUB_OUTPUT
           echo "services=$services" >> $GITHUB_OUTPUT
@@ -57,6 +57,12 @@ jobs:
         environment: ${{ fromJson(needs.detect-changes.outputs.environments) }}
       fail-fast: false
     steps:
+      - name: Checkout PR branch
+        uses: actions/checkout@v4
+
+      - name: Setup Kustomize
+        uses: imranismail/setup-kustomize@v2
+
       - name: Check if environment exists
         id: check-env
         run: |
@@ -66,29 +72,11 @@ jobs:
             echo "exists=false" >> $GITHUB_OUTPUT
           fi
 
-      - name: Cache Kustomize
-        id: cache-kustomize
-        uses: actions/cache@v3
-        with:
-          path: ${{ github.workspace }}/kustomize
-          key: kustomize-5.2.1
-
-      - name: Install Kustomize
-        if: steps.cache-kustomize.outputs.cache-hit != 'true'
-        run: |
-          curl "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash -s -- 5.2.1
-
-      - name: Checkout PR branch
-        uses: actions/checkout@v4
-
-      - name: Setup Kustomize
-        uses: imranismail/setup-kustomize@v2
-
       - name: Build AFTER manifest (PR branch)
         if: steps.check-env.outputs.exists == 'true'
         run: |
           mkdir -p output/after
-          filename=${{ matrix.service }}-${{ matrix.environment }}.yaml
+          filename="${{ matrix.service }}-${{ matrix.environment }}.yaml"
           kustomize build manifests/services/${{ matrix.service }}/environments/${{ matrix.environment }} > \
             output/after/$filename
 
@@ -104,7 +92,7 @@ jobs:
         run: |
           mkdir -p output/before
           cd base
-          filename=${{ matrix.service }}-${{ matrix.environment }}.yaml
+          filename="${{ matrix.service }}-${{ matrix.environment }}.yaml"
           if [ -d "manifests/services/${{ matrix.service }}/environments/${{ matrix.environment }}" ]; then
             kustomize build manifests/services/${{ matrix.service }}/environments/${{ matrix.environment }} > \
               ../output/before/$filename
@@ -137,9 +125,17 @@ jobs:
     steps:
       - name: Check build status
         run: |
-          if [ "${{ needs.build-kustomize-manifest.result }}" == "failure" ]; then
+          RESULT="${{ needs.build-kustomize-manifest.result }}"
+          echo "DEBUG: RESULT: $RESULT"
+          echo "Build result: $RESULT"
+          
+          if [ "$RESULT" == "failure" ]; then
             echo "❌ Manifest builds failed"
             exit 1
+          elif [ "$RESULT" == "cancelled" ]; then
+            echo "⚠️ Manifest builds were cancelled"
+            exit 1
           fi
-          echo "✅ All manifests built successfully"
+          
+          echo "✅ All manifests built successfully (or skipped)"
 
