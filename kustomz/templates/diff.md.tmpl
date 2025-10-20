@@ -2,10 +2,7 @@
 
 {{if .EnvironmentDiffs}}
 {{range .EnvironmentDiffs}}
-### [`{{.Environment}}`]
-
-{{if .HasChanges}}
-* **Lines changed:** {{.LineCount}}
+### [`{{.Environment}}`] {{if .HasChanges}} 📊 {{.LineCount}} line(s)
 
 <details open>
 <summary>Click to expand {{.Environment}} diff</summary>

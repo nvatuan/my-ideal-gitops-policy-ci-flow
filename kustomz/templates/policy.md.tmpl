@@ -1,4 +1,4 @@
-### 🛡️ Policy Eval
+## 🛡️ Policy Evaluation
 
 {{range $env, $sum := .MultiEnvPolicyReport.Summary}}
 **{{$env}}:** {{$sum.PassedPolicies}}/{{$sum.TotalPolicies}} passed{{if gt $sum.FailedPolicies 0}} | ❌ {{$sum.FailedPolicies}} failed{{end}}{{if gt $sum.ErroredPolicies 0}} | 💥 {{$sum.ErroredPolicies}} errored{{end}}  
