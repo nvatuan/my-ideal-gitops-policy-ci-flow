@@ -111,7 +111,7 @@ jobs:
           DOWNLOAD_URL="https://github.com/nvatuan/gitops-kustomz/releases/download/${{ env.GITOPS_KUSTOMZ_VERSION }}/${BINARY_NAME}"          
 
           echo "Downloading ${BINARY_NAME} from ${DOWNLOAD_URL}"
-          curl -sL "${DOWNLOAD_URL}" -o ~/go/bin/gitops-kustomz
+          curl -L "${DOWNLOAD_URL}" -o ~/go/bin/gitops-kustomz
           chmod +x ~/go/bin/gitops-kustomz
           ~/go/bin/gitops-kustomz --version
 
