@@ -22,7 +22,7 @@ jobs:
     name: Detect Changed Services
     runs-on: ubuntu-latest
     outputs:
-      matrix: ${{ steps.set-matrix.outputs.matrix }}
+      services: ${{ steps.set-outputs.outputs.services }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -44,7 +44,7 @@ jobs:
           fi
 
       - name: Detect changed services and environments
-        id: set-matrix
+        id: set-outputs
         run: |
           # Get list of changed files
           CHANGED_FILES=$(cat changed-files.txt)
