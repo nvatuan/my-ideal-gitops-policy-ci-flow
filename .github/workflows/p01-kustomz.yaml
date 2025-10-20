@@ -132,4 +132,4 @@ jobs:
             --environments stg,prod \
             --policies-path ./policies \
             --templates-path ./templates
-        continue-on-error: true  # Don't fail the job, let the tool determine pass/fail
+        continue-on-error: false # Binary will only fail if there are misconfigurations. Policy failure doesn't fail the job.
