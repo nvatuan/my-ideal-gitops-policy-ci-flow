@@ -108,8 +108,8 @@ jobs:
           if [ "$ARCH" = "aarch64" ]; then ARCH="arm64"; fi
           
           BINARY_NAME="gitops-kustomz-${OS}-${ARCH}"
-          DOWNLOAD_URL="https://github.com/gh-nvat/gitops-kustomz/releases/download/${{ env.GITOPS_KUSTOMZ_VERSION }}/${BINARY_NAME}"
-          
+          DOWNLOAD_URL="https://github.com/nvatuan/gitops-kustomz/releases/download/${{ env.GITOPS_KUSTOMZ_VERSION }}/${BINARY_NAME}"          
+
           echo "Downloading ${BINARY_NAME} from ${DOWNLOAD_URL}"
           curl -sL "${DOWNLOAD_URL}" -o ~/go/bin/gitops-kustomz
           chmod +x ~/go/bin/gitops-kustomz
