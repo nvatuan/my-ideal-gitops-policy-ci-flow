@@ -78,7 +78,7 @@ jobs:
           path: |
             /usr/local/bin/kustomize
             /usr/local/bin/opa
-            ~/go/bin/gitops-kustomz
+            /usr/local/bin/gitops-kustomz
           key: tools-${{ runner.os }}-kustomize-${{ env.KUSTOMIZE_VERSION }}-opa-${{ env.OPA_VERSION }}-gitops-${{ env.GITOPS_KUSTOMZ_VERSION }}
 
       - name: Install kustomize
@@ -111,9 +111,9 @@ jobs:
           DOWNLOAD_URL="https://github.com/nvatuan/gitops-kustomz/releases/download/${{ env.GITOPS_KUSTOMZ_VERSION }}/${BINARY_NAME}"          
 
           echo "Downloading ${BINARY_NAME} from ${DOWNLOAD_URL}"
-          curl -L "${DOWNLOAD_URL}" -o ~/go/bin/gitops-kustomz
-          chmod +x ~/go/bin/gitops-kustomz
-          ~/go/bin/gitops-kustomz --version
+          curl -L "${DOWNLOAD_URL}" -o /usr/local/bin/gitops-kustomz
+          chmod +x /usr/local/bin/gitops-kustomz
+          /usr/local/bin/gitops-kustomz --version
 
       - name: Add tools to PATH
         run: |
