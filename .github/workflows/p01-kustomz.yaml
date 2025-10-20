@@ -131,6 +131,6 @@ jobs:
             --manifests-path ./manifests/services \
             --service ${{ matrix.service }} \
             --environments stg,prod \
-            --policies-path ./policies \
-            --templates-path ./templates
+            --policies-path ./kustomz/policies \
+            --templates-path ./kustomz/templates
         continue-on-error: false # Binary will only fail if there are misconfigurations. Policy failure doesn't fail the job.
