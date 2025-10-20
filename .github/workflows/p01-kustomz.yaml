@@ -128,6 +128,7 @@ jobs:
             --run-mode github \
             --gh-repo ${{ github.repository }} \
             --gh-pr-number ${{ github.event.pull_request.number }} \
+            --manifest-path ./manifests/services \
             --service ${{ matrix.service }} \
             --environments stg,prod \
             --policies-path ./policies \
