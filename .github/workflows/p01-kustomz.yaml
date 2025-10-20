@@ -27,7 +27,8 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          fetch-depth: 2  # Only need base and head commits
+          filter: tree:0
+          fetch-depth: 0
 
       - name: Get changed YAML files
         id: changed-files
