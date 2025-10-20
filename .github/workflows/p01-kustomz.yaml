@@ -13,7 +13,7 @@ permissions:
 env:
   KUSTOMIZE_VERSION: '5.3.0'
   OPA_VERSION: '0.60.0'
-  GITOPS_KUSTOMZ_VERSION: 'v0.0.1'  # Pin to specific release version
+  GITOPS_KUSTOMZ_VERSION: 'v0.0.2'  # Pin to specific release version
   MANIFESTS_PATH: 'manifests/services'
 
 jobs:
