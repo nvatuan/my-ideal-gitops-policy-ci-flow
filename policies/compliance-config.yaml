@@ -1,0 +1,14 @@
+policies:
+  service-standard-taggings:
+    name: Service Standard Taggings
+    description: Ensures deployments meeting standard tagging requirements
+    type: opa
+    filePath: standard_taggings.rego
+
+    enforcement:
+      inEffectAfter: 2025-10-20T00:00:00Z
+      isWarningAfter: 2025-10-20T00:00:00Z
+      isBlockingAfter: null
+
+      override:
+        comment: "/skip-opa-standard-taggings"
