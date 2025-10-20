@@ -53,10 +53,7 @@ jobs:
           # Assumes structure: <manifests_path>/<service>/environments/<env>/
           SERVICES=$(echo "$CHANGED_FILES" | cut -d / -f 3 | sort | uniq | xargs -I@ echo "\"@\"" | tr '\n' ',')
           SERVICES="[${SERVICES::-1}]"
-          
-          if [ $DEBUG == 'true' ]; then
-            echo "[DEBUG] SERVICES: $SERVICES"
-          fi
+          echo "[DEBUG] SERVICES: $SERVICES"
           
           echo "services=$SERVICES" >> $GITHUB_OUTPUT
 
