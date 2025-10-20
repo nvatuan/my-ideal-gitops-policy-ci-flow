@@ -1,4 +1,4 @@
-name: Run GitOps Kustomz
+name: P01 - SP Policy Enforcement
 
 on:
   pull_request:
@@ -11,10 +11,8 @@ permissions:
   pull-requests: write
 
 env:
-  GO_VERSION: '1.22'
   KUSTOMIZE_VERSION: '5.3.0'
-  OPA_VERSION: '0.60.0'
-  GITOPS_KUSTOMZ_VERSION: 'latest'  # TODO: pin to specific version like 'v1.0.0' when it is stable
+  CONFTEST_VERSION: '0.63.0'
   MANIFESTS_PATH: 'manifests/services'
 
 jobs:
@@ -22,7 +20,7 @@ jobs:
     name: Detect Changed Services
     runs-on: ubuntu-latest
     outputs:
-      matrix: ${{ steps.set-matrix.outputs.matrix }}
+      services: ${{ steps.set-outputs.outputs.services }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -39,12 +37,16 @@ jobs:
           else
             echo "has-files=true" >> $GITHUB_OUTPUT
             echo "$changed_files" > changed-files.txt
-            echo "Changed files:"
-            cat changed-files.txt
+
+            if [ -z "$DEBUG" ]; then
+              echo "[DEBUG] Changed files ---|"
+              cat changed-files.txt
+              echo "[DEBUG] --- end of changed files ---|"
+            fi
           fi
 
       - name: Detect changed services and environments
-        id: set-matrix
+        id: set-outputs
         run: |
           # Get list of changed files
           CHANGED_FILES=$(cat changed-files.txt)
@@ -53,8 +55,8 @@ jobs:
           # Assumes structure: <manifests_path>/<service>/environments/<env>/
           SERVICES=$(echo "$CHANGED_FILES" | cut -d / -f 3 | sort | uniq | xargs -I@ echo "\"@\"" | tr '\n' ',')
           SERVICES="[${SERVICES::-1}]"
-          
-          if [ $DEBUG == 'true' ]; then
+
+          if [ -z "$DEBUG" ]; then
             echo "[DEBUG] SERVICES: $SERVICES"
           fi
           
@@ -69,17 +71,29 @@ jobs:
       matrix:
         service: ${{ fromJson(needs.detect-changes.outputs.services) }}
       fail-fast: false  # Continue checking all services even if one fails
+    outputs:
+      blocking-pass: ${{ steps.parse-policy-passing-status.outputs.blocking-pass }}
+      warning-pass: ${{ steps.parse-policy-passing-status.outputs.warning-pass }}
     steps:
+      - name: Get latest gitops-kustomz version
+        id: get-version
+        run: |
+          # Try to get latest release from GitHub API
+          LATEST_VERSION=$(curl -s "https://api.github.com/repos/nvatuan/gitops-kustomz/releases/latest" | jq -r '.tag_name' 2>/dev/null || echo "")
+          
+          # Fallback to a known working version if API fails
+          if [ -z "$LATEST_VERSION" ] || [ "$LATEST_VERSION" = "null" ]; then
+            echo "Failed to fetch latest version, using fallback"
+            LATEST_VERSION="v0.1.0"
+          fi
+          
+          echo "Using gitops-kustomz version: $LATEST_VERSION"
+          echo "version=$LATEST_VERSION" >> $GITHUB_OUTPUT
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          fetch-depth: 2  # Only need base and head commits
-
-      - name: Setup Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: true
+          filter: tree:0
+          fetch-depth: 1
 
       - name: Cache tools
         id: cache-tools
@@ -87,9 +101,9 @@ jobs:
         with:
           path: |
             /usr/local/bin/kustomize
-            /usr/local/bin/opa
-            ~/go/bin/gitops-kustomz
-          key: tools-${{ runner.os }}-kustomize-${{ env.KUSTOMIZE_VERSION }}-opa-${{ env.OPA_VERSION }}-gitops-${{ env.GITOPS_KUSTOMZ_VERSION }}
+            /usr/local/bin/conftest
+            /usr/local/bin/gitops-kustomz
+          key: tools-${{ runner.os }}-kustomize-${{ env.KUSTOMIZE_VERSION }}-conftest-${{ env.CONFTEST_VERSION }}-gitops-${{ steps.get-version.outputs.version }}
 
       - name: Install kustomize
         if: steps.cache-tools.outputs.cache-hit != 'true'
@@ -98,19 +112,33 @@ jobs:
           sudo mv kustomize /usr/local/bin/
           kustomize version
 
-      - name: Install OPA
+      - name: Install conftest
         if: steps.cache-tools.outputs.cache-hit != 'true'
         run: |
-          curl -L -o opa "https://github.com/open-policy-agent/opa/releases/download/v${{ env.OPA_VERSION }}/opa_linux_amd64_static"
-          chmod +x opa
-          sudo mv opa /usr/local/bin/
-          opa version
+          curl -L -o conftest.tar.gz "https://github.com/open-policy-agent/conftest/releases/download/v${{ env.CONFTEST_VERSION }}/conftest_${{ env.CONFTEST_VERSION }}_Linux_x86_64.tar.gz"
+          tar -xzf conftest.tar.gz
+          chmod +x conftest
+          sudo mv conftest /usr/local/bin/
+          conftest --version
 
       - name: Install gitops-kustomz
         if: steps.cache-tools.outputs.cache-hit != 'true'
         run: |
-          go install github.com/gh-nvat/gitops-kustomz@${{ env.GITOPS_KUSTOMZ_VERSION }}
-          cp ~/go/bin/gitops-kustomz ~/go/bin/gitops-kustomz.bak || true
+          # Download pre-built binary from GitHub releases
+          ARCH=$(uname -m)
+          OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+          
+          # Map architecture names
+          if [ "$ARCH" = "x86_64" ]; then ARCH="amd64"; fi
+          if [ "$ARCH" = "aarch64" ]; then ARCH="arm64"; fi
+          
+          BINARY_NAME="gitops-kustomz-${OS}-${ARCH}"
+          DOWNLOAD_URL="https://github.com/nvatuan/gitops-kustomz/releases/download/${{ steps.get-version.outputs.version }}/${BINARY_NAME}"          
+
+          echo "Downloading ${BINARY_NAME} from ${DOWNLOAD_URL}"
+          curl -L "${DOWNLOAD_URL}" -o /usr/local/bin/gitops-kustomz
+          chmod +x /usr/local/bin/gitops-kustomz
+          /usr/local/bin/gitops-kustomz --version
 
       - name: Add tools to PATH
         run: |
@@ -118,15 +146,163 @@ jobs:
           echo "$HOME/go/bin" >> $GITHUB_PATH
 
       - name: Run policy check
+        id: run-gitops-kustomz
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_RUN_ID: ${{ github.run_id }}
+          GITHUB_COMMENT_MAX_DIFF_LENGTH: 90
         run: |
           gitops-kustomz \
             --run-mode github \
             --gh-repo ${{ github.repository }} \
             --gh-pr-number ${{ github.event.pull_request.number }} \
+            --manifests-path manifests/services \
             --service ${{ matrix.service }} \
             --environments stg,prod \
-            --policies-path ./policies \
-            --templates-path ./templates
-        continue-on-error: true  # Don't fail the job, let the tool determine pass/fail
+            --policies-path kustomz/policies \
+            --templates-path kustomz/templates \
+            --output-dir output \
+            --enable-export-report true
+        continue-on-error: false # Binary will only fail if there are misconfigurations. Policy failure doesn't fail the job.
+
+      - name: Prepare artifacts for upload
+        id: prepare-artifacts
+        if: steps.run-gitops-kustomz.outcome == 'success'
+        run: |
+          # Check if report.json exists
+          if [ ! -f "output/report.json" ]; then
+            echo "❌ Report file not found"
+            exit 1
+          fi
+          
+          # Process artifacts for environments with contentType "ext_ghartifact"
+          echo "Processing artifacts..."
+          ARTIFACT_PATHS=""
+          ARTIFACT_COUNT=0
+          
+          # Get all environments and check their contentType
+          ENVIRONMENTS=$(jq -r '.manifestChanges | keys[]' output/report.json)
+          
+          for env in $ENVIRONMENTS; do
+            CONTENT_TYPE=$(jq -r ".manifestChanges[\"$env\"].contentType" output/report.json)
+            CONTENT_PATH=$(jq -r ".manifestChanges[\"$env\"].contentGHFilePath" output/report.json)
+            
+            if [ "$CONTENT_TYPE" = "ext_ghartifact" ] && [ "$CONTENT_PATH" != "null" ] && [ -n "$CONTENT_PATH" ]; then
+              echo "📦 Found artifact for environment: $env"
+              echo "   Content path: $CONTENT_PATH"
+              
+              # Check if the file exists
+              if [ -f "$CONTENT_PATH" ]; then
+                echo "   ✅ File exists, will upload as artifact"
+                ARTIFACT_PATHS="$ARTIFACT_PATHS$CONTENT_PATH"$'\n'
+                ARTIFACT_COUNT=$((ARTIFACT_COUNT + 1))
+              else
+                echo "   ❌ File not found: $CONTENT_PATH"
+              fi
+            fi
+          done
+          
+          echo "Total artifacts to upload: $ARTIFACT_COUNT"
+          echo "artifact-count=$ARTIFACT_COUNT" >> $GITHUB_OUTPUT
+          
+          # Save artifact paths for upload step
+          if [ $ARTIFACT_COUNT -gt 0 ]; then
+            echo "$ARTIFACT_PATHS" > artifact-paths.txt
+            echo "artifact-paths<<EOF" >> $GITHUB_OUTPUT
+            echo "$ARTIFACT_PATHS" >> $GITHUB_OUTPUT
+            echo "EOF" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Upload artifacts
+        if: steps.prepare-artifacts.outcome == 'success' && steps.prepare-artifacts.outputs.artifact-count > 0
+        uses: actions/upload-artifact@v4
+        with:
+          name: manifest-${{ matrix.service }}-artifacts
+          path: |
+            ${{ steps.prepare-artifacts.outputs.artifact-paths }}
+          retention-days: 30
+
+      - name: Process policy results
+        id: parse-policy-passing-status
+        if: steps.run-gitops-kustomz.outcome == 'success'
+        run: |
+          # Check if report.json exists
+          if [ ! -f "output/report.json" ]; then
+            echo "❌ Report file not found"
+            exit 1
+          fi
+          
+          # Extract blocking check results for all environments
+          BLOCKING_RESULTS=$(jq -r '.policyEvaluation.environmentSummary | to_entries[] | .value.passingStatus.passBlockingCheck' output/report.json)
+          WARNING_RESULTS=$(jq -r '.policyEvaluation.environmentSummary | to_entries[] | .value.passingStatus.passWarningCheck' output/report.json)
+          
+          echo "Blocking policy results: $BLOCKING_RESULTS"
+          echo "Warning policy results: $WARNING_RESULTS"
+          
+          # Check if any environment failed blocking policies
+          BLOCKING_FAILED=$(echo "$BLOCKING_RESULTS" | grep -c "false" || echo "0")
+          WARNING_FAILED=$(echo "$WARNING_RESULTS" | grep -c "false" || echo "0")
+          
+          if [ "$BLOCKING_FAILED" -gt 0 ]; then
+            echo "❌ Blocking policies failed in $BLOCKING_FAILED environment(s)"
+            echo "blocking-pass=false" >> $GITHUB_OUTPUT
+          else
+            echo "✅ All blocking policies passed"
+            echo "blocking-pass=true" >> $GITHUB_OUTPUT
+          fi
+          
+          if [ "$WARNING_FAILED" -gt 0 ]; then
+            echo "❌ Warning policies failed in $WARNING_FAILED environment(s)"
+            echo "warning-pass=false" >> $GITHUB_OUTPUT
+          else
+            echo "✅ All warning policies passed"
+            echo "warning-pass=true" >> $GITHUB_OUTPUT
+          fi
+
+  check-blocking-policies:
+    name: Check Blocking Policies
+    runs-on: ubuntu-latest
+    needs: kustomz
+    if: needs.kustomz.result == 'success'
+    steps:
+      - name: Check blocking policies
+        run: |
+          if [ "${{ needs.kustomz.result }}" != "success" ]; then
+            echo "❌ Kustomz job failed, blocking will exit 0 but warning will fail to signify something went wrong"
+            exit 0
+          fi
+
+          # Get the blocking pass status from the kustomz job outputs
+          BLOCKING_PASS="${{ needs.kustomz.outputs.blocking-pass }}"
+          
+          if [ "$BLOCKING_PASS" = "true" ]; then
+            echo "✅ All blocking policies passed"
+          else
+            echo "❌ Blocking policies failed"
+            echo "This check is REQUIRED before merge"
+            exit 1
+          fi
+
+  check-warning-policies:
+    name: Check Warning Policies
+    runs-on: ubuntu-latest
+    needs: kustomz
+    if: needs.kustomz.result == 'success'
+    steps:
+      - name: Check warning policies
+        run: |
+          if [ "${{ needs.kustomz.result }}" != "success" ]; then
+            echo "❌ Kustomz job failed, blocking will exit 0 but warning will fail to signify something went wrong"
+            exit 0
+          fi
+
+          # Get the warning pass status from the kustomz job outputs
+          WARNING_PASS="${{ needs.kustomz.outputs.warning-pass }}"
+          
+          if [ "$WARNING_PASS" = "true" ]; then
+            echo "✅ All warning policies passed"
+          else
+            echo "❌ Warning policies failed"
+            echo "This check is REQUIRED before merge"
+            exit 1
+          fi
