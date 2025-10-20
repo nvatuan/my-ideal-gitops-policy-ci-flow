@@ -51,7 +51,7 @@ jobs:
           
           # Extract unique service-environment combinations
           # Assumes structure: <manifests_path>/<service>/environments/<env>/
-          SERVICES=$(echo "$CHANGED_FILES" | cut -d / -f 3 | sort | uniq | xargs -I@ echo "\"@\"" | tr '\n' ','))
+          SERVICES=$(echo "$CHANGED_FILES" | cut -d / -f 3 | sort | uniq | xargs -I@ echo "\"@\"" | tr '\n' ',')
           SERVICES="[${SERVICES::-1}]"
           
           if [ $DEBUG == 'true' ]; then
