@@ -13,7 +13,6 @@ permissions:
 env:
   KUSTOMIZE_VERSION: '5.3.0'
   OPA_VERSION: '0.60.0'
-  GITOPS_KUSTOMZ_VERSION: 'v0.0.5'  # Pin to specific release version
   MANIFESTS_PATH: 'manifests/services'
 
 jobs:
@@ -66,6 +65,20 @@ jobs:
         service: ${{ fromJson(needs.detect-changes.outputs.services) }}
       fail-fast: false  # Continue checking all services even if one fails
     steps:
+      - name: Get latest gitops-kustomz version
+        id: get-version
+        run: |
+          # Try to get latest release from GitHub API
+          LATEST_VERSION=$(curl -s "https://api.github.com/repos/nvatuan/gitops-kustomz/releases/latest" | jq -r '.tag_name' 2>/dev/null || echo "")
+          
+          # Fallback to a known working version if API fails
+          if [ -z "$LATEST_VERSION" ] || [ "$LATEST_VERSION" = "null" ]; then
+            echo "Failed to fetch latest version, using fallback"
+            LATEST_VERSION="v0.0.5"
+          fi
+          
+          echo "Using gitops-kustomz version: $LATEST_VERSION"
+          echo "version=$LATEST_VERSION" >> $GITHUB_OUTPUT
       - name: Checkout code
         uses: actions/checkout@v4
         with:
@@ -79,7 +92,7 @@ jobs:
             /usr/local/bin/kustomize
             /usr/local/bin/opa
             /usr/local/bin/gitops-kustomz
-          key: tools-${{ runner.os }}-kustomize-${{ env.KUSTOMIZE_VERSION }}-opa-${{ env.OPA_VERSION }}-gitops-${{ env.GITOPS_KUSTOMZ_VERSION }}
+          key: tools-${{ runner.os }}-kustomize-${{ env.KUSTOMIZE_VERSION }}-opa-${{ env.OPA_VERSION }}-gitops-${{ steps.get-version.outputs.version }}
 
       - name: Install kustomize
         if: steps.cache-tools.outputs.cache-hit != 'true'
@@ -108,7 +121,7 @@ jobs:
           if [ "$ARCH" = "aarch64" ]; then ARCH="arm64"; fi
           
           BINARY_NAME="gitops-kustomz-${OS}-${ARCH}"
-          DOWNLOAD_URL="https://github.com/nvatuan/gitops-kustomz/releases/download/${{ env.GITOPS_KUSTOMZ_VERSION }}/${BINARY_NAME}"          
+          DOWNLOAD_URL="https://github.com/nvatuan/gitops-kustomz/releases/download/${{ steps.get-version.outputs.version }}/${BINARY_NAME}"          
 
           echo "Downloading ${BINARY_NAME} from ${DOWNLOAD_URL}"
           curl -L "${DOWNLOAD_URL}" -o /usr/local/bin/gitops-kustomz
