@@ -212,4 +212,3 @@ test_deployment_with_other_labels if {
 test_budget_component_label_constant if {
 	budget_component_label == "github.com/nvatuan/domains"
 }
-
