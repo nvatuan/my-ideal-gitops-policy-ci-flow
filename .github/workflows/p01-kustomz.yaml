@@ -144,11 +144,11 @@ jobs:
             --run-mode github \
             --gh-repo ${{ github.repository }} \
             --gh-pr-number ${{ github.event.pull_request.number }} \
-            --manifests-path ./manifests/services \
+            --manifests-path manifests/services \
             --service ${{ matrix.service }} \
             --environments stg,prod \
-            --policies-path ./kustomz/policies \
-            --templates-path ./kustomz/templates \
+            --policies-path kustomz/policies \
+            --templates-path kustomz/templates \
             --debug true
           ls -la
         continue-on-error: false # Binary will only fail if there are misconfigurations. Policy failure doesn't fail the job.
