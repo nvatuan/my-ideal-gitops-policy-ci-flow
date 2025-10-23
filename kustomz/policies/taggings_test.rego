@@ -2,6 +2,8 @@ package main
 
 import rego.v1
 
+budget_component_label := "github.com/nvatuan/domains"
+
 # Test Deployment with valid budget component label
 test_deployment_with_valid_label if {
 	deny_result := data.main.deny with input as {
@@ -212,3 +214,4 @@ test_deployment_with_other_labels if {
 test_budget_component_label_constant if {
 	budget_component_label == "github.com/nvatuan/domains"
 }
+
