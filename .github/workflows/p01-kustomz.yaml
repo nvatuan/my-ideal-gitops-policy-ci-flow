@@ -82,7 +82,8 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          fetch-depth: 2  # Only need base and head commits
+          filter: tree:0
+          fetch-depth: 1
 
       - name: Cache tools
         id: cache-tools
@@ -137,7 +138,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          cd ~
+          pwd
           ls -la
           gitops-kustomz \
             --run-mode github \
