@@ -105,8 +105,8 @@ jobs:
       - name: Install conftest
         if: steps.cache-tools.outputs.cache-hit != 'true'
         run: |
-          curl -L -o conftest "https://github.com/open-policy-agent/conftest/releases/download/v${{ env.CONFTEST_VERSION }}/conftest_${CONFTEST_VERSION}_Linux_x86_64.tar.gz"
-          tar -xzf conftest_${CONFTEST_VERSION}_Linux_x86_64.tar.gz
+          curl -L -o conftest.tar.gz "https://github.com/open-policy-agent/conftest/releases/download/v${{ env.CONFTEST_VERSION }}/conftest_${{ env.CONFTEST_VERSION }}_Linux_x86_64.tar.gz"
+          tar -xzf conftest.tar.gz
           chmod +x conftest
           sudo mv conftest /usr/local/bin/
           conftest --version
