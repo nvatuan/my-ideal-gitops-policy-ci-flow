@@ -139,8 +139,6 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          pwd
-          ls -la
           gitops-kustomz \
             --run-mode github \
             --gh-repo ${{ github.repository }} \
@@ -150,6 +148,78 @@ jobs:
             --environments stg,prod \
             --policies-path kustomz/policies \
             --templates-path kustomz/templates \
-            --debug true
-          ls -la
+            --output-dir output \
+            --enable-export-report true
         continue-on-error: false # Binary will only fail if there are misconfigurations. Policy failure doesn't fail the job.
+
+  check-blocking-policies:
+    name: Check Blocking Policies
+    runs-on: ubuntu-latest
+    needs: kustomz
+    if: always() && needs.kustomz.result == 'success'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Check blocking policies
+        run: |
+          # Check if report.json exists
+          if [ ! -f "output/report.json" ]; then
+            echo "❌ Report file not found"
+            exit 1
+          fi
+          
+          # Extract blocking check results for all environments
+          BLOCKING_RESULTS=$(jq -r '.policyEvaluation.environmentSummary | to_entries[] | .value.passingStatus.passBlockingCheck' output/report.json)
+          
+          echo "Blocking policy results:"
+          echo "$BLOCKING_RESULTS"
+          
+          # Check if any environment failed blocking policies
+          FAILED_ENVS=$(echo "$BLOCKING_RESULTS" | grep -c "false" || echo "0")
+          
+          if [ "$FAILED_ENVS" -gt 0 ]; then
+            echo "❌ Blocking policies failed in $FAILED_ENVS environment(s)"
+            echo "This check is REQUIRED before merge"
+            exit 1
+          else
+            echo "✅ All blocking policies passed"
+          fi
+
+  check-warning-policies:
+    name: Check Warning Policies
+    runs-on: ubuntu-latest
+    needs: kustomz
+    if: always() && needs.kustomz.result == 'success'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Check warning policies
+        run: |
+          # Check if report.json exists
+          if [ ! -f "output/report.json" ]; then
+            echo "❌ Report file not found"
+            exit 1
+          fi
+          
+          # Extract warning check results for all environments
+          WARNING_RESULTS=$(jq -r '.policyEvaluation.environmentSummary | to_entries[] | .value.passingStatus.passWarningCheck' output/report.json)
+          
+          echo "Warning policy results:"
+          echo "$WARNING_RESULTS"
+          
+          # Check if any environment failed warning policies
+          FAILED_ENVS=$(echo "$WARNING_RESULTS" | grep -c "false" || echo "0")
+          
+          if [ "$FAILED_ENVS" -gt 0 ]; then
+            echo "❌ Warning policies failed in $FAILED_ENVS environment(s)"
+            echo "This check is REQUIRED before merge"
+            exit 1
+          else
+            echo "✅ All warning policies passed"
+          fi
