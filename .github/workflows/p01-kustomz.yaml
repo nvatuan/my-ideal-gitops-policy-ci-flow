@@ -64,6 +64,9 @@ jobs:
       matrix:
         service: ${{ fromJson(needs.detect-changes.outputs.services) }}
       fail-fast: false  # Continue checking all services even if one fails
+    outputs:
+      blocking-pass: ${{ steps.parse-policy-passing-status.outputs.blocking-pass }}
+      warning-pass: ${{ steps.parse-policy-passing-status.outputs.warning-pass }}
     steps:
       - name: Get latest gitops-kustomz version
         id: get-version
@@ -152,18 +155,9 @@ jobs:
             --enable-export-report true
         continue-on-error: false # Binary will only fail if there are misconfigurations. Policy failure doesn't fail the job.
 
-  check-blocking-policies:
-    name: Check Blocking Policies
-    runs-on: ubuntu-latest
-    needs: kustomz
-    if: always() && needs.kustomz.result == 'success'
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-
-      - name: Check blocking policies
+      - name: Process policy results
+        id: parse-policy-passing-status
+        if: always()
         run: |
           # Check if report.json exists
           if [ ! -f "output/report.json" ]; then
@@ -173,53 +167,75 @@ jobs:
           
           # Extract blocking check results for all environments
           BLOCKING_RESULTS=$(jq -r '.policyEvaluation.environmentSummary | to_entries[] | .value.passingStatus.passBlockingCheck' output/report.json)
+          WARNING_RESULTS=$(jq -r '.policyEvaluation.environmentSummary | to_entries[] | .value.passingStatus.passWarningCheck' output/report.json)
           
-          echo "Blocking policy results:"
-          echo "$BLOCKING_RESULTS"
+          echo "Blocking policy results: $BLOCKING_RESULTS"
+          echo "Warning policy results: $WARNING_RESULTS"
           
           # Check if any environment failed blocking policies
-          FAILED_ENVS=$(echo "$BLOCKING_RESULTS" | grep -c "false" || echo "0")
+          BLOCKING_FAILED=$(echo "$BLOCKING_RESULTS" | grep -c "false" || echo "0")
+          WARNING_FAILED=$(echo "$WARNING_RESULTS" | grep -c "false" || echo "0")
           
-          if [ "$FAILED_ENVS" -gt 0 ]; then
-            echo "❌ Blocking policies failed in $FAILED_ENVS environment(s)"
-            echo "This check is REQUIRED before merge"
-            exit 1
+          if [ "$BLOCKING_FAILED" -gt 0 ]; then
+            echo "❌ Blocking policies failed in $BLOCKING_FAILED environment(s)"
+            echo "blocking-pass=false" >> $GITHUB_OUTPUT
           else
             echo "✅ All blocking policies passed"
+            echo "blocking-pass=true" >> $GITHUB_OUTPUT
+          fi
+          
+          if [ "$WARNING_FAILED" -gt 0 ]; then
+            echo "❌ Warning policies failed in $WARNING_FAILED environment(s)"
+            echo "warning-pass=false" >> $GITHUB_OUTPUT
+          else
+            echo "✅ All warning policies passed"
+            echo "warning-pass=true" >> $GITHUB_OUTPUT
+          fi
+
+  check-blocking-policies:
+    name: Check Blocking Policies
+    runs-on: ubuntu-latest
+    needs: kustomz
+    if: always()
+    steps:
+      - name: Check blocking policies
+        run: |
+          if [ "${{ needs.kustomz.result }}" != "success" ]; then
+            echo "❌ Kustomz job failed, blocking will exit 0 but warning will fail to signify something went wrong"
+            exit 0
+          fi
+
+          # Get the blocking pass status from the kustomz job outputs
+          BLOCKING_PASS="${{ needs.kustomz.outputs.blocking-pass }}"
+          
+          if [ "$BLOCKING_PASS" = "true" ]; then
+            echo "✅ All blocking policies passed"
+          else
+            echo "❌ Blocking policies failed"
+            echo "This check is REQUIRED before merge"
+            exit 1
           fi
 
   check-warning-policies:
     name: Check Warning Policies
     runs-on: ubuntu-latest
     needs: kustomz
-    if: always() && needs.kustomz.result == 'success'
+    if: always()
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-
       - name: Check warning policies
         run: |
-          # Check if report.json exists
-          if [ ! -f "output/report.json" ]; then
-            echo "❌ Report file not found"
-            exit 1
+          if [ "${{ needs.kustomz.result }}" != "success" ]; then
+            echo "❌ Kustomz job failed, blocking will exit 0 but warning will fail to signify something went wrong"
+            exit 0
           fi
+
+          # Get the warning pass status from the kustomz job outputs
+          WARNING_PASS="${{ needs.kustomz.outputs.warning-pass }}"
           
-          # Extract warning check results for all environments
-          WARNING_RESULTS=$(jq -r '.policyEvaluation.environmentSummary | to_entries[] | .value.passingStatus.passWarningCheck' output/report.json)
-          
-          echo "Warning policy results:"
-          echo "$WARNING_RESULTS"
-          
-          # Check if any environment failed warning policies
-          FAILED_ENVS=$(echo "$WARNING_RESULTS" | grep -c "false" || echo "0")
-          
-          if [ "$FAILED_ENVS" -gt 0 ]; then
-            echo "❌ Warning policies failed in $FAILED_ENVS environment(s)"
+          if [ "$WARNING_PASS" = "true" ]; then
+            echo "✅ All warning policies passed"
+          else
+            echo "❌ Warning policies failed"
             echo "This check is REQUIRED before merge"
             exit 1
-          else
-            echo "✅ All warning policies passed"
           fi
