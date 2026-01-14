@@ -6,6 +6,8 @@ on:
     paths:
       - 'manifests/services/**/*.yaml'
       - 'manifests/services/**/*.yml'
+      - 'manifests-nested/services/**/*.yaml'
+      - 'manifests-nested/services/**/*.yml'
 
 permissions:
   contents: read
