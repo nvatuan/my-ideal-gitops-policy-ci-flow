@@ -6,9 +6,6 @@ namespace: my-app-prod
 resources:
 - ../../base
 
-## include this for a large change
-# - ingress-nginx/helmed.yaml
-
 patchesStrategicMerge:
 - deployment-patch.yaml
 - ingress-patch.yaml

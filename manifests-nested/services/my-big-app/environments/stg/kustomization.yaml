@@ -6,6 +6,9 @@ namespace: my-app-stg
 resources:
 - ../../base
 
+## include this for a large change
+# - datadog/helmed.yaml
+
 patchesStrategicMerge:
 - deployment-patch.yaml
 - ingress-patch.yaml
