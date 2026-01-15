@@ -1,0 +1,11 @@
+# helmfile for ingress-nginx in prod environment
+repositories:
+  - name: datadog
+    url: https://helm.datadoghq.com
+
+releases:
+  - name: datadog
+    chart: datadog/datadog
+    version: 3.160.2
+    values:
+      - ./values.yaml
